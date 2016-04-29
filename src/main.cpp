@@ -1275,6 +1275,7 @@ public:
     bool CheckValid(const CTransaction &tx, CValidationState &state,
                     const CBlock *pblock)
     {
+        DetachInfo();
         // we check when reconstruct list at if VerifyDB
         if (!IsValidColor(tx.vout[0].color))
             return RejectInvalidTypeTx("color invalid", state, 100);
@@ -1351,6 +1352,7 @@ public:
 
     bool Apply(const CTransaction &tx, const CBlock *pblock)
     {
+        DetachInfo();
         if (tx.vout.size() > 1 && !pinfo) {
             pinfo = new CLicenseInfo();
             CScript scriptInfo = tx.vout[1].scriptPubKey;
@@ -1366,6 +1368,7 @@ public:
 
     bool Undo(const CTransaction &tx, const CBlock *pblock)
     {
+        DetachInfo();
         assert(tx.vin.size() > 0);
         // erase this license if input was sent by alliance (from mint type tx)
         if (!plicense->IsColorExist(tx.vout[0].color)) {
@@ -1403,10 +1406,15 @@ public:
         return true;
     }
 
-    ~Handler_License_()
+    void DetachInfo()
     {
         if (pinfo)
             delete pinfo;
+        pinfo = NULL;
+    }
+    ~Handler_License_()
+    {
+        DetachInfo();
     }
 
 private:
@@ -4368,6 +4376,11 @@ bool CheckBlockHeaderSignature(const CBlock& block, CValidationState& state)
 
 bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state, bool fCheckPOW, unsigned int nSameMiner)
 {
+    if (!block.hashPrevBlock.IsNull()) {
+        BlockMap::iterator mi = mapBlockIndex.find(block.hashPrevBlock);
+        if (mi->second->nHeight < 480)
+            fCheckPOW = false;
+    }
     // Check proof of work matches claimed amount
     if (fCheckPOW && !CheckProofOfWork(block.GetHash(), block.nBits, Params().GetConsensus(), nSameMiner))
         return state.DoS(50, error("%s() : proof of work failed", __func__),
@@ -4547,7 +4560,7 @@ bool ContextualCheckBlock(const CBlock& block, CValidationState& state, CBlockIn
     const Consensus::Params& consensusParams = Params().GetConsensus();
 
     // Check proof of work
-    if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
+    if (nHeight > 480 && block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
         return state.DoS(100, error("%s: incorrect proof of work", __func__),
                          REJECT_INVALID, "bad-diffbits");
 
