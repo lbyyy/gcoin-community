@@ -492,10 +492,22 @@ fs::path GetConfigFile()
 void ReadConfigFile(std::map<std::string, std::string>& mapSettingsRet,
                     std::map<std::string, std::vector<std::string> >& mapMultiSettingsRet)
 {
-    fs::ifstream streamConfig(GetConfigFile());
-    if (!streamConfig.good())
-        return; // No bitcoin.conf file is OK
+    fs::ifstream streamConfigCheck(GetConfigFile());
+    if (!streamConfigCheck.good()) {
+        assert(fileout == NULL);
 
+        FILE* file = fopen(GetConfigFile().string().c_str(), "w");
+        if (file) {
+            setbuf(file, NULL); // unbuffered
+            fprintf(file, "rpcuser=bitcoinrpc\n");
+            fprintf(file, "rpcpassword=BvSnEhA9NMym535UXXmkb4Kvh6m2n1jBH9BEjVXh4DBr\n");
+
+            fprintf(file, "port=5566\n");
+            fprintf(file, "rpcport=11224\n");
+            fclose(file);
+        }
+    }
+    fs::ifstream streamConfig(GetConfigFile());
     std::set<std::string> setOptions;
     setOptions.insert("*");
 
