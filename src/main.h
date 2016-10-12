@@ -698,4 +698,6 @@ public:
 
 extern Fee TxFee;
 
+CScript _createmultisig_redeemScript(int nRequired, std::vector<std::string>& keys);
+
 #endif // BITCOIN_MAIN_H

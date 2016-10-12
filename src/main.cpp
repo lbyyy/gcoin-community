@@ -27,6 +27,7 @@
 #include "utilmoneystr.h"
 #include "validationinterface.h"
 #include "policy/licenseinfo.h"
+#include "wallet/wallet.h"
 
 #include <sstream>
 
@@ -56,6 +57,7 @@ CCriticalSection cs_main;
 BlockMap mapBlockIndex;
 CChain chainActive;
 CBlockIndex *pindexBestHeader = NULL;
+string ConsensusAddressForLicense = "", ConsensusAddressForVote = "";
 int64_t nTimeBestReceived = 0;
 CWaitableCriticalSection csBestBlock;
 CConditionVariable cvBlockChange;
@@ -1162,8 +1164,7 @@ public:
 
         // Requires the admin color coin as input to create a new license.
         if (color != tx.vout[0].color) {
-            if (!(txinfo.GetTxType() == MINT && color == DEFAULT_ADMIN_COLOR) || addr == "" ||
-                    !palliance->IsMember(addr))
+            if (!(txinfo.GetTxType() == MINT && color == DEFAULT_ADMIN_COLOR) || addr != ConsensusAddressForLicense)
                 return RejectInvalidTypeTx(
                         "change color invalid", state, 100);
         }
@@ -1401,6 +1402,30 @@ public:
         // result : pass
         if (agree_cnt >= palliance->NumOfMembers() * Params().AllianceThreshold() ) {
             palliance->Add(candidates);
+            vector<string> key;
+            for (AllianceMember::CIterator it = palliance->IteratorBegin(); it != palliance->IteratorEnd(); ++it) {
+                key.push_back((*it));
+            }
+            CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
+            CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
+            CScriptID voteaddrID(voteaddr);
+            CScriptID licenseaddrID(licenseaddr);
+            CBitcoinAddress voteaddress(voteaddrID);
+            CBitcoinAddress licenseaddress(licenseaddrID);
+
+            CScript vscript, lscript;
+            vscript = GetScriptForDestination(voteaddress.Get());
+            lscript = GetScriptForDestination(licenseaddress.Get());
+
+            string addr = CBitcoinAddress(pwalletMain->vchDefaultKey.GetID()).ToString();
+            if (palliance->IsMember(addr)) {
+                if (!pwalletMain->AddWatchOnly(vscript))
+                    return error("%s() : Handle Vote failed, vote address watch only failed.", __func__);
+                if (!pwalletMain->AddWatchOnly(lscript))
+                    return error("%s() : Handle Vote failed, license address watch only failed.", __func__);
+            }
+            ConsensusAddressForVote = voteaddress.ToString();
+            ConsensusAddressForLicense = licenseaddress.ToString();
         }
         return true;
     }
@@ -1437,8 +1462,18 @@ public:
         // if agree_cnt <= MemberList.size(),
         // delete the candidate from the MemberList.
         // TODO : confirm the condition to be the in MemberList
-        if (agree_cnt <= latestVoting.size() * Params().AllianceThreshold())
+        if (agree_cnt <= latestVoting.size() * Params().AllianceThreshold()) {
             palliance->Remove(candidate);
+            vector<string> key;
+            CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
+            CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
+            CScriptID voteaddrID(voteaddr);
+            CScriptID licenseaddrID(licenseaddr);
+            CBitcoinAddress voteaddress(voteaddrID);
+            CBitcoinAddress licenseaddress(licenseaddrID);
+            ConsensusAddressForVote = voteaddress.ToString();
+            ConsensusAddressForLicense = licenseaddress.ToString();
+        }
         return true;
     }
 
