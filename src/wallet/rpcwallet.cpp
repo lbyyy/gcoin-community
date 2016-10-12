@@ -3331,6 +3331,55 @@ Value mint(const Array& params, bool fHelp)
     return wtx.GetHash().GetHex();
 }
 
+Value mintvote(const Array& params, bool fHelp)
+{
+    if (!EnsureWalletIsAvailable(fHelp))
+        return Value::null;
+    if (fHelp || params.size() != 0)
+        throw runtime_error(
+            _(__func__) + "\n"
+            "\nmintvote color-coin\n"
+            + HelpRequiringPassphrase() +
+            "\nArguments: NONE\n"
+            "\nResult:\n"
+            "\"transactionid\"  (string) The transaction id.\n"
+            "\nExamples:\n"
+            + HelpExampleCli("mintvote", "")
+        );
+
+    CWalletTx wtx;
+    EnsureWalletIsUnlocked();
+    string strError = pwalletMain->MintMoney((int64_t)1, (type_Color)0, wtx, VOTE);
+    if (strError != "")
+        return strError;
+        //throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    return wtx.GetHash().GetHex();
+}
+
+Value mintlicense(const Array& params, bool fHelp)
+{
+    if (!EnsureWalletIsAvailable(fHelp))
+        return Value::null;
+    if (fHelp || params.size() != 0)
+        throw runtime_error(
+            _(__func__) + "\n"
+            "\nmintvote color-coin\n"
+            + HelpRequiringPassphrase() +
+            "\nArguments: NONE\n"
+            "\nResult:\n"
+            "\"transactionid\"  (string) The transaction id.\n"
+            "\nExamples:\n"
+            + HelpExampleCli("mintvote", "")
+        );
+
+    CWalletTx wtx;
+    EnsureWalletIsUnlocked();
+    string strError = pwalletMain->MintMoney((int64_t)1, (type_Color)0, wtx, LICENSE);
+    if (strError != "")
+        return strError;
+        //throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    return wtx.GetHash().GetHex();
+}
 
 /*
 ///////////

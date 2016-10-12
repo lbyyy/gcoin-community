@@ -691,6 +691,8 @@ public:
 
 extern Fee TxFee;
 
+extern std::string ConsensusAddressForLicense;
+extern std::string ConsensusAddressForVote;
 CScript _createmultisig_redeemScript(int nRequired, std::vector<std::string>& keys);
 
 #endif // BITCOIN_MAIN_H

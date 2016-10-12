@@ -1062,9 +1062,9 @@ public:
                         state, 100);
             }
         } else {
-            if (!palliance->IsMember(addr)) {
+            if (addr != ConsensusAddressForVote && addr != ConsensusAddressForLicense) {
                 return RejectInvalidTypeTx(
-                        "not AE but mint color=0", state, 100);
+                        "Admin color must be mint to consessus address", state, 100);
             }
         }
 

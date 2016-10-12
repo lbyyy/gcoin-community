@@ -3062,7 +3062,7 @@ bool CWallet::GetDestData(const CTxDestination &dest, const string &key, string 
     return false;
 }
 
-string CWallet::MintMoney(const CAmount& nValue, const type_Color& color, CWalletTx& wtxNew)
+string CWallet::MintMoney(const CAmount& nValue, const type_Color& color, CWalletTx& wtxNew, const tx_type mint_purpose)
 {
     // check if total value of this color meet MAX_MONEY
     if (nValue > MAX_MONEY / COIN) {
@@ -3105,14 +3105,15 @@ string CWallet::MintMoney(const CAmount& nValue, const type_Color& color, CWalle
     if (color == DEFAULT_ADMIN_COLOR) {
         if (nValue != 1)
             return "value of admin color must be 1";
-        CPubKey pubkey;
-        pubkey = vchDefaultKey;
-        scriptPubKey = CScript() << ToByteVector(pubkey) << OP_CHECKSIG;
-        addr = GetDestination(scriptPubKey);
-        if (addr == "")
-            return "GetDestination error";
-        else if (!palliance->IsMember(addr))
-            return "you are not AE";
+        CBitcoinAddress address;
+        if (mint_purpose == LICENSE) {
+            address = CBitcoinAddress(ConsensusAddressForLicense);
+        } else if (mint_purpose == VOTE) {
+            address = CBitcoinAddress(ConsensusAddressForVote);
+        } else {
+            return "Purpose of minting admin color must be \"for LICENSE\" , \"for VOTE\" or \"for BANVOTE\"";
+        }
+        scriptPubKey = GetScriptForDestination(address.Get());
         txNew.vout.resize(1);
         txNew.vout[0].scriptPubKey = scriptPubKey;
         txNew.vout[0].nValue = nValue * COIN;
