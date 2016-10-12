@@ -77,9 +77,6 @@ bool fAlerts = DEFAULT_ALERTS;
 unsigned int nCoinCacheSize = 5000;
 static bool fJustStart = false;
 
-map<string, vector<map<string, bool> > > VoteList;
-map<string, vector<map<string, bool> > > BanVoteList;
-
 bool (*AlternateFunc_GetTransaction)(const uint256 &transaction_hash,
                                      CTransaction &result,
                                      uint256 &block_hash,
@@ -1300,43 +1297,20 @@ public:
     bool CheckValid(const CTransaction &tx, CValidationState &state,
                     const CBlock *pblock)
     {
-        string senderAddr = GetTxInputAddr(tx, pblock);
-        string receiverAddr = GetTxOutputAddr(tx, 0);
-
-        if (!palliance->IsMember(senderAddr))
-            return RejectInvalidTypeTx("voter not AE member", state, 100);
-
-        map<string, vector<map<string, bool> > >::const_iterator itVList = VoteList.find(receiverAddr);
-        if (itVList != VoteList.end() && itVList->second.size() != 0) {
-            map<string, bool>::const_iterator itVLVM = itVList->second.back().find(senderAddr);
-            if (itVLVM == itVList->second.back().end())
-                return RejectInvalidTypeTx("no sender address", state, 100);
-            if (itVLVM->second) {
-                if (itVList->second.back().size() == palliance->NumOfMembers()) {
-                    map<string, bool>::const_iterator it_v, it_v_end;
-                    AllianceMember::CIterator it_m, it_m_end;
-                    it_v = itVList->second.back().begin();
-                    it_v_end = itVList->second.back().end();
-                    it_m = palliance->IteratorBegin();
-                    it_m_end = palliance->IteratorEnd();
-                    bool fDiff = false;
-                    for ( ; it_m != it_m_end && it_v != it_v_end; ++it_v, ++it_m) {
-                        if (*it_m != it_v->first) {
-                            fDiff = true;
-                            break;
-                        }
-                    }
-                    if (!fDiff) {
-                        CCoinsViewCache view(pcoinsTip);
-                        if (view.HaveCoins(tx.GetHash())) {
-                            LogPrintf("Warning : Already have this vote tx(may cause by block forking).\n");
-                        } else {
-                            return RejectInvalidTypeTx("voted", state, 100);
-                        }
-                    }
-                }
-            }
+        TxInfo txinfo;
+        if (!txinfo.init(tx.vin[0].prevout, pblock, true)) {
+            return error("%s() : %s Fetch input fail\n", __func__, tx.GetHash().ToString());
         }
+
+        if (!(txinfo.GetTxType() == MINT && txinfo.GetTxOutColorOfIndex(tx.vin[0].prevout.n) == DEFAULT_ADMIN_COLOR)
+            || txinfo.GetTxOutAddressOfIndex(tx.vin[0].prevout.n) != ConsensusAddressForVote)
+            return RejectInvalidTypeTx(
+                    "Vote failed", state, 100);
+
+        string receiverAddr = GetTxOutputAddr(tx, 0);
+        if (palliance->IsMember(receiverAddr))
+            return RejectInvalidTypeTx("Candidate is alliance", state, 100);
+
         return true;
     };
 
@@ -1361,155 +1335,51 @@ public:
     {
         LOCK(cs_main);
         string candidates = GetTxOutputAddr(tx, 0);
-        string voter = GetTxInputAddr(tx, pblock);
-
-        map<string, vector<map<string, bool> > >::iterator itVList = VoteList.find(candidates);
-        map<string, bool>::iterator itVLVM;
-        if (itVList == VoteList.end()) {
-            itVList = CreateTheBilling_(candidates);
-        } else {
-            if (itVList->second.size() == 0) {
-                LogPrintf("%s() fail : VoteList went wrong (this should not happen)", __func__);
-                return error("%s() : Handle Vote(%s) failed", __func__, tx.GetHash().ToString());
-            }
-            itVLVM = itVList->second.back().find(voter);
-            if (itVLVM == itVList->second.back().end()) {
-                LogPrintf("%s() fail : voter \"%s\" is not an AE", __func__, voter);
-                return error("%s() : Handle Vote(%s) failed", __func__, tx.GetHash().ToString());
-            } else if (itVLVM->second) {
-                itVList = CreateTheBilling_(candidates);
-            }
+        palliance->Add(candidates);
+        vector<string> key;
+        for (AllianceMember::CIterator it = palliance->IteratorBegin(); it != palliance->IteratorEnd(); ++it) {
+            key.push_back((*it));
         }
+        CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
+        CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
+        CScriptID voteaddrID(voteaddr);
+        CScriptID licenseaddrID(licenseaddr);
+        CBitcoinAddress voteaddress(voteaddrID);
+        CBitcoinAddress licenseaddress(licenseaddrID);
 
-        if (itVList->second.size() == 0) {
-            LogPrintf("%s() fail : VoteList went wrong (this should not happen)", __func__);
-            return error("%s() : Handle Vote(%s) failed", __func__, tx.GetHash().ToString());
+        CScript vscript, lscript;
+        vscript = GetScriptForDestination(voteaddress.Get());
+        lscript = GetScriptForDestination(licenseaddress.Get());
+
+        string addr = CBitcoinAddress(pwalletMain->vchDefaultKey.GetID()).ToString();
+        if (palliance->IsMember(addr)) {
+            if (!pwalletMain->AddWatchOnly(vscript))
+                return error("%s() : Handle Vote failed, vote address watch only failed.", __func__);
+            if (!pwalletMain->AddWatchOnly(lscript))
+                return error("%s() : Handle Vote failed, license address watch only failed.", __func__);
         }
-
-        itVLVM = itVList->second.back().find(voter);
-        if (itVLVM == itVList->second.back().end()) {
-            LogPrintf("%s() fail : voter \"%s\" is not an AE", __func__, voter);
-            return error("%s() : Handle Vote(%s) failed", __func__, tx.GetHash().ToString());
-        }
-
-        itVLVM->second = true;
-        // check if vote pass
-        size_t agree_cnt = 0;
-        for (map<string, bool>::iterator it = itVList->second.back().begin(); it != itVList->second.back().end(); it++) {
-            if (it->second)
-                agree_cnt++;
-        }
-        // result : pass
-        if (agree_cnt >= palliance->NumOfMembers() * Params().AllianceThreshold() ) {
-            palliance->Add(candidates);
-            vector<string> key;
-            for (AllianceMember::CIterator it = palliance->IteratorBegin(); it != palliance->IteratorEnd(); ++it) {
-                key.push_back((*it));
-            }
-            CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
-            CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
-            CScriptID voteaddrID(voteaddr);
-            CScriptID licenseaddrID(licenseaddr);
-            CBitcoinAddress voteaddress(voteaddrID);
-            CBitcoinAddress licenseaddress(licenseaddrID);
-
-            CScript vscript, lscript;
-            vscript = GetScriptForDestination(voteaddress.Get());
-            lscript = GetScriptForDestination(licenseaddress.Get());
-
-            string addr = CBitcoinAddress(pwalletMain->vchDefaultKey.GetID()).ToString();
-            if (palliance->IsMember(addr)) {
-                if (!pwalletMain->AddWatchOnly(vscript))
-                    return error("%s() : Handle Vote failed, vote address watch only failed.", __func__);
-                if (!pwalletMain->AddWatchOnly(lscript))
-                    return error("%s() : Handle Vote failed, license address watch only failed.", __func__);
-            }
-            ConsensusAddressForVote = voteaddress.ToString();
-            ConsensusAddressForLicense = licenseaddress.ToString();
-        }
+        ConsensusAddressForVote = voteaddress.ToString();
+        ConsensusAddressForLicense = licenseaddress.ToString();
         return true;
     }
 
     bool Undo(const CTransaction &tx, const CBlock *pblock)
     {
-        string candidate = GetTxOutputAddr(tx, 0);
-        string voter = GetTxInputAddr(tx, pblock, true);
-
-        // fetch the latest voting result, which is the one that counts.
-        map<string, vector<map<string, bool> > >::iterator itVList = VoteList.find(candidate);
-        if (itVList == VoteList.end() || itVList->second.size() == 0) {
-            LogPrintf("%s () fail : VoteList went wrong (this should not happen)", __func__);
-            return false;
-        }
-
-        map<string, bool> &latestVoting = itVList->second.back();
-        map<string, bool>::iterator itVLVM = latestVoting.find(voter);
-        if (itVLVM == latestVoting.end()) {
-            LogPrintf("%s () fail : latestVoting went wrong (this should not happen)", __func__);
-            return false;
-        }
-
-        // undo the vote in VoteList
-        itVLVM->second = false;
-
-        // see how many votes the candidate has received now.
-        size_t agree_cnt = 0;
-        for (map<string, bool>::iterator it = latestVoting.begin(); it != latestVoting.end(); it++)
-            if (it->second)
-                agree_cnt++;
-
-        // update the MemberList.
-        // if agree_cnt <= MemberList.size(),
-        // delete the candidate from the MemberList.
-        // TODO : confirm the condition to be the in MemberList
-        if (agree_cnt <= latestVoting.size() * Params().AllianceThreshold()) {
-            palliance->Remove(candidate);
-            vector<string> key;
-            CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
-            CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
-            CScriptID voteaddrID(voteaddr);
-            CScriptID licenseaddrID(licenseaddr);
-            CBitcoinAddress voteaddress(voteaddrID);
-            CBitcoinAddress licenseaddress(licenseaddrID);
-            ConsensusAddressForVote = voteaddress.ToString();
-            ConsensusAddressForLicense = licenseaddress.ToString();
-        }
+        LOCK(cs_main);
+        string candidates = GetTxOutputAddr(tx, 0);
+        palliance->Remove(candidates);
+        vector<string> key;
+        CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
+        CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
+        CScriptID voteaddrID(voteaddr);
+        CScriptID licenseaddrID(licenseaddr);
+        CBitcoinAddress voteaddress(voteaddrID);
+        CBitcoinAddress licenseaddress(licenseaddrID);
+        ConsensusAddressForVote = voteaddress.ToString();
+        ConsensusAddressForLicense = licenseaddress.ToString();
         return true;
     }
 
-    bool CheckNotRepeated(const CTransaction &tx, const CTransaction &pool_tx,
-                          CValidationState &state)
-    {
-        string txSenderAddr = GetTxInputAddr(tx, NULL);
-        string txReceiverAddr = GetTxOutputAddr(tx, 0);
-        string poolTxSenderAddr = GetTxInputAddr(pool_tx, NULL);
-        string poolTxReceiverAddr = GetTxOutputAddr(pool_tx, 0);
-        if (txReceiverAddr == poolTxReceiverAddr &&
-            txSenderAddr == poolTxSenderAddr)
-            return RejectInvalidTypeTx(
-                    "voted for same candidate : in memory conflict", state, 50);
-        return true;
-    }
-
-private:
-
-    map<string, vector<map<string, bool> > >::iterator CreateTheBilling_(string &candidates)
-    {
-        map<string, vector<map<string, bool> > >::iterator itRet = VoteList.find(candidates);
-        if (itRet == VoteList.end()) {
-            itRet = (VoteList.insert(make_pair(candidates, vector<map<string, bool> >()))).first;
-        }
-
-        map<string, bool> List;
-        for (AllianceMember::CIterator it = palliance->IteratorBegin();
-             it != palliance->IteratorEnd();
-             ++it) {
-            List.insert(make_pair(*it, false));
-        }
-
-        itRet->second.push_back(List);
-        return itRet;
-    }
 };
 
 class Handler_BanVote_ : public HandlerInterface, public HandlerUtility_
@@ -1520,43 +1390,20 @@ public:
     bool CheckValid(const CTransaction &tx, CValidationState &state,
                     const CBlock *pblock)
     {
-        string senderAddr = GetTxInputAddr(tx, pblock);
-        string receiverAddr = GetTxOutputAddr(tx, 0);
-
-        if (!palliance->IsMember(senderAddr))
-            return RejectInvalidTypeTx("voter not AE member", state, 100);
-
-        map<string, vector<map<string, bool> > >::const_iterator itVList = BanVoteList.find(receiverAddr);
-        if (itVList != BanVoteList.end() && itVList->second.size() != 0) {
-            map<string, bool>::const_iterator itVLVM = itVList->second.back().find(senderAddr);
-            if (itVLVM == itVList->second.back().end())
-                return RejectInvalidTypeTx("no sender address", state, 100);
-            if (itVLVM->second) {
-                if (itVList->second.back().size() == palliance->NumOfMembers()) {
-                    map<string, bool>::const_iterator it_v, it_v_end;
-                    AllianceMember::CIterator it_m, it_m_end;
-                    it_v = itVList->second.back().begin();
-                    it_v_end = itVList->second.back().end();
-                    it_m = palliance->IteratorBegin();
-                    it_m_end = palliance->IteratorEnd();
-                    bool fDiff = false;
-                    for ( ; it_m != it_m_end && it_v != it_v_end; ++it_v, ++it_m) {
-                        if (*it_m != it_v->first) {
-                            fDiff = true;
-                            break;
-                        }
-                    }
-                    if (!fDiff) {
-                        CCoinsViewCache view(pcoinsTip);
-                        if (view.HaveCoins(tx.GetHash())) {
-                            LogPrintf("Warning : Already have this ban-vote tx(may cause by block forking).\n");
-                        } else {
-                            return RejectInvalidTypeTx("ban-voted", state, 100);
-                        }
-                    }
-                }
-            }
+        TxInfo txinfo;
+        if (!txinfo.init(tx.vin[0].prevout, pblock, true)) {
+            return error("%s() : %s Fetch input fail\n", __func__, tx.GetHash().ToString());
         }
+
+        if (!(txinfo.GetTxType() == MINT && txinfo.GetTxOutColorOfIndex(tx.vin[0].prevout.n) == DEFAULT_ADMIN_COLOR)
+            || txinfo.GetTxOutAddressOfIndex(tx.vin[0].prevout.n) != ConsensusAddressForVote)
+            return RejectInvalidTypeTx(
+                    "Vote failed", state, 100);
+
+        string receiverAddr = GetTxOutputAddr(tx, 0);
+        if (!palliance->IsMember(receiverAddr))
+            return RejectInvalidTypeTx("Candidate is not alliance", state, 100);
+
         return true;
     };
 
@@ -1581,153 +1428,36 @@ public:
     {
         LOCK(cs_main);
         string candidates = GetTxOutputAddr(tx, 0);
-        string voter = GetTxInputAddr(tx, pblock);
+        palliance->Remove(candidates);
+        vector<string> key;
+        CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
+        CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
+        CScriptID voteaddrID(voteaddr);
+        CScriptID licenseaddrID(licenseaddr);
+        CBitcoinAddress voteaddress(voteaddrID);
+        CBitcoinAddress licenseaddress(licenseaddrID);
+        ConsensusAddressForVote = voteaddress.ToString();
+        ConsensusAddressForLicense = licenseaddress.ToString();
 
-        map<string, vector<map<string, bool> > >::iterator itVList = BanVoteList.find(candidates);
-        map<string, bool>::iterator itVLVM;
-        if (itVList == BanVoteList.end()) {
-            itVList = CreateTheBilling_(candidates, BanVoteList);
-        } else {
-            if (itVList->second.size() == 0) {
-                LogPrintf("%s() fail : BanVoteList went wrong (this should not happen)", __func__);
-                return error("%s() : Handle BanVote(%s) failed", __func__, tx.GetHash().ToString());
-            }
-            itVLVM = itVList->second.back().find(voter);
-            if (itVLVM == itVList->second.back().end()) {
-                LogPrintf("%s() fail : voter \"%s\" is not an AE", __func__, voter);
-                return error("%s() : Handle BanVote(%s) failed", __func__, tx.GetHash().ToString());
-            } else if (itVLVM->second) {
-                itVList = CreateTheBilling_(candidates, BanVoteList);
-            }
-        }
-
-        if (itVList->second.size() == 0) {
-            LogPrintf("%s() fail : BanVoteList went wrong (this should not happen)", __func__);
-            return error("%s() : Handle BanVote(%s) failed", __func__, tx.GetHash().ToString());
-        }
-
-        itVLVM = itVList->second.back().find(voter);
-        if (itVLVM == itVList->second.back().end()) {
-            LogPrintf("%s() fail : voter \"%s\" is not an AE", __func__, voter);
-            return error("%s() : Handle BanVote failed", __func__, tx.GetHash().ToString());
-        }
-
-        itVLVM->second = true;
-        // check if vote pass
-        size_t agree_cnt = 0;
-        for (map<string, bool>::iterator it = itVList->second.back().begin(); it != itVList->second.back().end(); it++) {
-            if (it->second)
-                agree_cnt++;
-        }
-        // result : pass
-        if (agree_cnt > (palliance->NumOfMembers() - 1) / 2) {
-            palliance->Remove(candidates);
-            RemoveVoter_(candidates);
-        }
         return true;
     }
 
     bool Undo(const CTransaction &tx, const CBlock *pblock)
     {
+        LOCK(cs_main);
         string candidate = GetTxOutputAddr(tx, 0);
-        string voter = GetTxInputAddr(tx, pblock, true);
+        palliance->Add(candidate);
+        vector<string> key;
+        CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
+        CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
+        CScriptID voteaddrID(voteaddr);
+        CScriptID licenseaddrID(licenseaddr);
+        CBitcoinAddress voteaddress(voteaddrID);
+        CBitcoinAddress licenseaddress(licenseaddrID);
+        ConsensusAddressForVote = voteaddress.ToString();
+        ConsensusAddressForLicense = licenseaddress.ToString();
 
-        // fetch the latest voting result, which is the one that counts.
-        map<string, vector<map<string, bool> > >::iterator itVList = BanVoteList.find(candidate);
-        if (itVList == BanVoteList.end() || itVList->second.size() == 0) {
-            LogPrintf("%s () fail : BanVoteList went wrong (this should not happen)", __func__);
-            return false;
-        }
-
-        map<string, bool> &latestVoting = itVList->second.back();
-        map<string, bool>::iterator itVLVM = latestVoting.find(voter);
-        if (itVLVM == latestVoting.end()) {
-            LogPrintf("%s () fail : latestVoting went wrong (this should not happen)", __func__);
-            return false;
-        }
-
-        // undo the ban-vote in BanVoteList
-        itVLVM->second = false;
-
-        // see how many votes the candidate has received now.
-        size_t agree_cnt = 0;
-        for (map<string, bool>::iterator it = latestVoting.begin(); it != latestVoting.end(); it++)
-            if (it->second)
-                agree_cnt++;
-
-        // update the MemberList.
-        // if agree_cnt <= MemberList.size(),
-        // delete the candidate from the MemberList.
-        // TODO : confirm the condition to be the in MemberList
-        if (agree_cnt <= (latestVoting.size() - 1) / 2)
-            palliance->Add(candidate);
         return true;
-    }
-
-    bool CheckNotRepeated(const CTransaction &tx, const CTransaction &pool_tx,
-                          CValidationState &state)
-    {
-        string txSenderAddr = GetTxInputAddr(tx, NULL);
-        string txReceiverAddr = GetTxOutputAddr(tx, 0);
-        string poolTxSenderAddr = GetTxInputAddr(pool_tx, NULL);
-        string poolTxReceiverAddr = GetTxOutputAddr(pool_tx, 0);
-        if (txReceiverAddr == poolTxReceiverAddr &&
-            txSenderAddr == poolTxSenderAddr)
-            return RejectInvalidTypeTx(
-                    "voted for same candidate : in memory conflict", state, 50);
-        return true;
-    }
-
-private:
-
-    map<string, vector<map<string, bool> > >::iterator CreateTheBilling_(string &candidates, map<string, vector<map<string, bool> > > &VList)
-    {
-        map<string, vector<map<string, bool> > >::iterator itRet = VList.find(candidates);
-        if (itRet == VList.end()) {
-            itRet = (VList.insert(make_pair(candidates, vector<map<string, bool> >()))).first;
-        }
-
-        map<string, bool> List;
-        for (AllianceMember::CIterator it = palliance->IteratorBegin();
-                it != palliance->IteratorEnd();
-                ++it) {
-            List.insert(make_pair(*it, false));
-        }
-
-        itRet->second.push_back(List);
-        return itRet;
-    }
-
-    void RemoveVoter_(string &candidate)
-    {
-        string receiver;
-        map<string, vector<map<string, bool> > >::iterator itVList;
-        map<string, bool>::iterator itVLVM;
-        // Inactivate Votelist contains banned AE as a Candidate
-        CreateTheBilling_(candidate, VoteList);
-        // Inactivate BanVotelist contains banned AE as a Candidate
-        CreateTheBilling_(candidate, BanVoteList);
-        // Search and inactivate Votelist contains banned AE as a Voter
-        for (itVList = VoteList.begin(); itVList != VoteList.end(); itVList++) {
-            for (itVLVM = itVList->second.back().begin(); itVLVM != itVList->second.back().end(); itVLVM++) {
-                if (itVLVM->first == candidate) {
-                    receiver = itVList->first;
-                    itVList = CreateTheBilling_(receiver, VoteList);
-                    break;
-                }
-            }
-        }
-
-        // Search and inactivate BanVotelist contains banned AE as a Voter
-        for (itVList = BanVoteList.begin(); itVList != BanVoteList.end(); itVList++) {
-            for (itVLVM = itVList->second.back().begin(); itVLVM != itVList->second.back().end(); itVLVM++) {
-                if (itVLVM->first == candidate) {
-                    receiver = itVList->first;
-                    itVList = CreateTheBilling_(receiver, BanVoteList);
-                    break;
-                }
-            }
-        }
     }
 
 };
