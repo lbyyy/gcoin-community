@@ -1718,17 +1718,17 @@ void CWallet::AvailableCoinsForType(vector<COutput>& vCoins, const type_Color& s
                 if (!(IsSpent(wtxid, i)) && mine != ISMINE_NO && !IsLockedCoin((*it).first, i) && (pcoin->vout[i].nValue == COIN || fIncludeZeroValue)) {
                     string addr = GetTxOutputAddr(*pcoin, i);
                     if (type == LICENSE) {
-                        if (fMintLicense && palliance->IsMember(addr)) {
+                        if (fMintLicense && addr == ConsensusAddressForLicense) {
                                 // no send_color license owner, AE create new license.
-                                vCoins.push_back(COutput(pcoin, i, nDepth, (mine & ISMINE_SPENDABLE) != ISMINE_NO));
+                                vCoins.push_back(COutput(pcoin, i, nDepth, (mine & ISMINE_ALL) != ISMINE_NO));
                                 return;
                         } else if (plicense->IsColorOwner(send_color, addr)) {
                                 // send_color-license exists, and want to give his/her license to other address.
-                                vCoins.push_back(COutput(pcoin, i, nDepth, (mine & ISMINE_SPENDABLE) != ISMINE_NO));
+                                vCoins.push_back(COutput(pcoin, i, nDepth, (mine & ISMINE_ALL) != ISMINE_NO));
                                 return;
                         }
-                    } else if (palliance->IsMember(addr)) {// input of special type tx must be alliance(Except license transfer)
-                        vCoins.push_back(COutput(pcoin, i, nDepth, (mine & ISMINE_SPENDABLE) != ISMINE_NO));
+                    } else if (addr == ConsensusAddressForVote) {// input of special type tx must be alliance(Except license transfer)
+                        vCoins.push_back(COutput(pcoin, i, nDepth, (mine & ISMINE_ALL) != ISMINE_NO));
                         return;
                     }
                 }
@@ -1975,7 +1975,7 @@ bool CWallet::SelectCoins(const CAmount& nTargetValue, const type_Color& color, 
 
 // Create Special Type Transaction
 bool CWallet::CreateTypeTransaction(const std::vector<CRecipient>& vecSend, const type_Color& send_color, int type, CWalletTx& wtxNew,
-                                        string& strFailReason, const string &misc)
+                                        string& strFailReason, bool &fComplete, const string &misc)
 {
     CAmount nValue = 0;
 
@@ -2060,11 +2060,17 @@ bool CWallet::CreateTypeTransaction(const std::vector<CRecipient>& vecSend, cons
 
                 // Sign
                 int nIn = 0;
-                BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)
-                    if (!SignSignature(*this, *coin.first, txNew, nIn++)) {
-                        strFailReason = "Signing " + TxType[type] + " transaction failed";
-                        return false;
-                    }
+                BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins) {
+                    CTxIn& txin = txNew.vin[nIn];
+                    const CScript& prevPubKey = coin.first->vout[txin.prevout.n].scriptPubKey;
+                    SignSignature(*this, prevPubKey, txNew, nIn);
+                    // ... and merge in other signatures:
+                    CTransaction tx(txNew);
+                    TransactionSignatureCreator creator(this, &tx, nIn, SIGHASH_ALL);
+                    if (!VerifyScript(txin.scriptSig, prevPubKey, STANDARD_SCRIPT_VERIFY_FLAGS, creator.Checker()))
+                        fComplete = false;
+                    nIn++;
+                }
 
                 // Embed the constructed transaction data in wtxNew.
                 *static_cast<CTransaction*>(&wtxNew) = CTransaction(txNew);

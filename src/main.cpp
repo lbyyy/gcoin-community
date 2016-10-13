@@ -1342,8 +1342,12 @@ public:
         }
         CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
         CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
+
         CScriptID voteaddrID(voteaddr);
         CScriptID licenseaddrID(licenseaddr);
+        pwalletMain->AddCScript(voteaddr);
+        pwalletMain->AddCScript(licenseaddr);
+
         CBitcoinAddress voteaddress(voteaddrID);
         CBitcoinAddress licenseaddress(licenseaddrID);
 
@@ -1434,8 +1438,23 @@ public:
         CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
         CScriptID voteaddrID(voteaddr);
         CScriptID licenseaddrID(licenseaddr);
+        pwalletMain->AddCScript(voteaddr);
+        pwalletMain->AddCScript(licenseaddr);
+
         CBitcoinAddress voteaddress(voteaddrID);
         CBitcoinAddress licenseaddress(licenseaddrID);
+        CScript vscript, lscript;
+        vscript = GetScriptForDestination(voteaddress.Get());
+        lscript = GetScriptForDestination(licenseaddress.Get());
+
+        string addr = CBitcoinAddress(pwalletMain->vchDefaultKey.GetID()).ToString();
+        if (palliance->IsMember(addr)) {
+            if (!pwalletMain->AddWatchOnly(vscript))
+                return error("%s() : Handle Vote failed, vote address watch only failed.", __func__);
+            if (!pwalletMain->AddWatchOnly(lscript))
+                return error("%s() : Handle Vote failed, license address watch only failed.", __func__);
+        }
+
         ConsensusAddressForVote = voteaddress.ToString();
         ConsensusAddressForLicense = licenseaddress.ToString();
 
