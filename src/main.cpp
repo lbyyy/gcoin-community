@@ -1306,9 +1306,9 @@ public:
             || txinfo.GetTxOutAddressOfIndex(tx.vin[0].prevout.n) != ConsensusAddressForVote)
             return RejectInvalidTypeTx(
                     "Vote failed", state, 100);
-
-        string receiverAddr = GetTxOutputAddr(tx, 0);
-        if (palliance->IsMember(receiverAddr))
+        string candidates = tx.vout[0].scriptPubKey.ToString();
+        candidates = candidates.substr(0, candidates.find(" OP_CHECKSIG"));
+        if (palliance->IsMember(candidates))
             return RejectInvalidTypeTx("Candidate is alliance", state, 100);
 
         return true;
@@ -1334,7 +1334,8 @@ public:
     bool Apply(const CTransaction &tx, const CBlock *pblock)
     {
         LOCK(cs_main);
-        string candidates = GetTxOutputAddr(tx, 0);
+        string candidates = tx.vout[0].scriptPubKey.ToString();
+        candidates = candidates.substr(0, candidates.find(" OP_CHECKSIG"));
         palliance->Add(candidates);
         vector<string> key;
         for (AllianceMember::CIterator it = palliance->IteratorBegin(); it != palliance->IteratorEnd(); ++it) {
@@ -1345,22 +1346,22 @@ public:
 
         CScriptID voteaddrID(voteaddr);
         CScriptID licenseaddrID(licenseaddr);
-        pwalletMain->AddCScript(voteaddr);
-        pwalletMain->AddCScript(licenseaddr);
-
         CBitcoinAddress voteaddress(voteaddrID);
         CBitcoinAddress licenseaddress(licenseaddrID);
 
-        CScript vscript, lscript;
-        vscript = GetScriptForDestination(voteaddress.Get());
-        lscript = GetScriptForDestination(licenseaddress.Get());
-
-        string addr = CBitcoinAddress(pwalletMain->vchDefaultKey.GetID()).ToString();
-        if (palliance->IsMember(addr)) {
-            if (!pwalletMain->AddWatchOnly(vscript))
-                return error("%s() : Handle Vote failed, vote address watch only failed.", __func__);
-            if (!pwalletMain->AddWatchOnly(lscript))
-                return error("%s() : Handle Vote failed, license address watch only failed.", __func__);
+        if (!fJustStart) {
+            pwalletMain->AddCScript(voteaddr);
+            pwalletMain->AddCScript(licenseaddr);
+            CScript vscript, lscript;
+            vscript = GetScriptForDestination(voteaddress.Get());
+            lscript = GetScriptForDestination(licenseaddress.Get());
+            string addr = (CScript() << ToByteVector(pwalletMain->vchDefaultKey)).ToString();
+            if (palliance->IsMember(addr)) {
+                if (!pwalletMain->AddWatchOnly(vscript))
+                    return error("%s() : Handle Vote failed, vote address watch only failed.", __func__);
+                if (!pwalletMain->AddWatchOnly(lscript))
+                    return error("%s() : Handle Vote failed, license address watch only failed.", __func__);
+            }
         }
         ConsensusAddressForVote = voteaddress.ToString();
         ConsensusAddressForLicense = licenseaddress.ToString();
@@ -1370,9 +1371,14 @@ public:
     bool Undo(const CTransaction &tx, const CBlock *pblock)
     {
         LOCK(cs_main);
-        string candidates = GetTxOutputAddr(tx, 0);
+        string candidates = tx.vout[0].scriptPubKey.ToString();
+        candidates = candidates.substr(0, candidates.find(" OP_CHECKSIG"));
         palliance->Remove(candidates);
         vector<string> key;
+        for (AllianceMember::CIterator it = palliance->IteratorBegin(); it != palliance->IteratorEnd(); ++it) {
+            key.push_back((*it));
+        }
+
         CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
         CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
         CScriptID voteaddrID(voteaddr);
@@ -1403,9 +1409,9 @@ public:
             || txinfo.GetTxOutAddressOfIndex(tx.vin[0].prevout.n) != ConsensusAddressForVote)
             return RejectInvalidTypeTx(
                     "Vote failed", state, 100);
-
-        string receiverAddr = GetTxOutputAddr(tx, 0);
-        if (!palliance->IsMember(receiverAddr))
+        string candidates = tx.vout[0].scriptPubKey.ToString();
+        candidates = candidates.substr(0, candidates.find(" OP_CHECKSIG"));
+        if (!palliance->IsMember(candidates))
             return RejectInvalidTypeTx("Candidate is not alliance", state, 100);
 
         return true;
@@ -1431,30 +1437,35 @@ public:
     bool Apply(const CTransaction &tx, const CBlock *pblock)
     {
         LOCK(cs_main);
-        string candidates = GetTxOutputAddr(tx, 0);
+        string candidates = tx.vout[0].scriptPubKey.ToString();
+        candidates = candidates.substr(0, candidates.find(" OP_CHECKSIG"));
         palliance->Remove(candidates);
         vector<string> key;
+        for (AllianceMember::CIterator it = palliance->IteratorBegin(); it != palliance->IteratorEnd(); ++it) {
+            key.push_back((*it));
+        }
+
         CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
         CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
         CScriptID voteaddrID(voteaddr);
         CScriptID licenseaddrID(licenseaddr);
-        pwalletMain->AddCScript(voteaddr);
-        pwalletMain->AddCScript(licenseaddr);
-
         CBitcoinAddress voteaddress(voteaddrID);
         CBitcoinAddress licenseaddress(licenseaddrID);
-        CScript vscript, lscript;
-        vscript = GetScriptForDestination(voteaddress.Get());
-        lscript = GetScriptForDestination(licenseaddress.Get());
+        if (!fJustStart) {
+            pwalletMain->AddCScript(voteaddr);
+            pwalletMain->AddCScript(licenseaddr);
+            CScript vscript, lscript;
+            vscript = GetScriptForDestination(voteaddress.Get());
+            lscript = GetScriptForDestination(licenseaddress.Get());
 
-        string addr = CBitcoinAddress(pwalletMain->vchDefaultKey.GetID()).ToString();
-        if (palliance->IsMember(addr)) {
-            if (!pwalletMain->AddWatchOnly(vscript))
-                return error("%s() : Handle Vote failed, vote address watch only failed.", __func__);
-            if (!pwalletMain->AddWatchOnly(lscript))
-                return error("%s() : Handle Vote failed, license address watch only failed.", __func__);
+            string addr = (CScript() << ToByteVector(pwalletMain->vchDefaultKey)).ToString();
+            if (palliance->IsMember(addr)) {
+                if (!pwalletMain->AddWatchOnly(vscript))
+                    return error("%s() : Handle Vote failed, vote address watch only failed.", __func__);
+                if (!pwalletMain->AddWatchOnly(lscript))
+                    return error("%s() : Handle Vote failed, license address watch only failed.", __func__);
+            }
         }
-
         ConsensusAddressForVote = voteaddress.ToString();
         ConsensusAddressForLicense = licenseaddress.ToString();
 
@@ -1464,9 +1475,14 @@ public:
     bool Undo(const CTransaction &tx, const CBlock *pblock)
     {
         LOCK(cs_main);
-        string candidate = GetTxOutputAddr(tx, 0);
-        palliance->Add(candidate);
+        string candidates = tx.vout[0].scriptPubKey.ToString();
+        candidates = candidates.substr(0, candidates.find(" OP_CHECKSIG"));
+        palliance->Add(candidates);
         vector<string> key;
+        for (AllianceMember::CIterator it = palliance->IteratorBegin(); it != palliance->IteratorEnd(); ++it) {
+            key.push_back((*it));
+        }
+
         CScript voteaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().AllianceThreshold(), key);
         CScript licenseaddr = _createmultisig_redeemScript(palliance->NumOfMembers() * Params().LicenseThreshold(), key);
         CScriptID voteaddrID(voteaddr);
@@ -3869,18 +3885,23 @@ bool CheckBlock(const CBlock& block, CValidationState& state, bool fCheckPOW, bo
         }
     }
 
-    string addr = GetTxOutputAddr(block.vtx[0], 0);
+    string pubkey = block.vtx[0].vout[0].scriptPubKey.ToString();
+    pubkey = pubkey.substr(0, pubkey.find(" OP_CHECKSIG"));
     unsigned int nAlliance = palliance->NumOfMembers();
     if (!CheckBlockHeader(block, state, fCheckPOW,
-                fJustStart? pminer->NumOfMined(addr, nAlliance): NumOfMined(block, nAlliance)))
+                fJustStart? pminer->NumOfMined(pubkey, nAlliance): NumOfMined(block, nAlliance)))
         return false;
     // add creater of first block to AE member List
     // TODO : erase if this first block fail.
     if (GetHeight() >= 0) {
         if (palliance->NumOfMembers() == 0) {
-            palliance->Add(addr);
+
+            palliance->Add(pubkey);
+            string addr = GetTxOutputAddr(block.vtx[0], 0);
+            ConsensusAddressForLicense = addr;
+            ConsensusAddressForVote = addr;
         }
-        if (!palliance->IsMember(addr)) {
+        if (!palliance->IsMember(pubkey)) {
             return state.DoS(100, error("CheckBlock(): Not Alliance Member"),
                              REJECT_INVALID, "not-alliance", true);
         }
@@ -4565,13 +4586,19 @@ bool UpdateList(const CBlockIndex *pindex)
     // Now: ignore ReadFail Block and continue checking.
     if (!ReadBlockFromDisk(block, pindex))
         return true;
+
+    string addr = GetTxOutputAddr(block.vtx[0], 0);
     // creater of first block must be AE
     if (pindex->nHeight == 1 && palliance->NumOfMembers() == 0) {
-        string addr = GetTxOutputAddr(block.vtx[0], 0);
-        palliance->Add(addr);
+        string pubkey = block.vtx[0].vout[0].scriptPubKey.ToString();
+        pubkey = pubkey.substr(0, pubkey.find(" OP_CHECKSIG"));
+
+        palliance->Add(pubkey);
+        ConsensusAddressForLicense = addr;
+        ConsensusAddressForVote = addr;
     }
     // record the miner
-    pminer->Add(GetTxOutputAddr(block.vtx[0], 0));
+    pminer->Add(addr);
     // scan all transaction (no need to check vtx[0])
     for (unsigned int i = 1; i < block.vtx.size(); ++i) {
         if (!type_transaction_handler::GetHandler(block.vtx[i].type)->Apply(

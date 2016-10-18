@@ -517,7 +517,7 @@ static bool CreateLicense(const CTxDestination &address, const type_Color color,
     }
 }
 
-static bool SendVote(const CTxDestination& address, CWalletTx& wtxNew)
+static bool SendVote(const CPubKey& pubkey, CWalletTx& wtxNew)
 {
     CAmount curBalance = pwalletMain->GetVoteBalance();
 
@@ -526,7 +526,7 @@ static bool SendVote(const CTxDestination& address, CWalletTx& wtxNew)
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Insufficient vote funds");
 
     // Parse Gcoin address
-    CScript scriptPubKey = GetScriptForDestination(address);
+    CScript scriptPubKey = CScript() << ToByteVector(pubkey) << OP_CHECKSIG;;
 
     // Create and send the transaction
     CReserveKey reservekey(pwalletMain);
@@ -548,7 +548,7 @@ static bool SendVote(const CTxDestination& address, CWalletTx& wtxNew)
 
 }
 
-static bool SendBanVote(const CTxDestination& address, CWalletTx& wtxNew)
+static bool SendBanVote(const CPubKey& pubkey, CWalletTx& wtxNew)
 {
     CAmount curBalance = pwalletMain->GetVoteBalance();
 
@@ -557,7 +557,7 @@ static bool SendBanVote(const CTxDestination& address, CWalletTx& wtxNew)
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Insufficient ban-vote funds");
 
     // Parse Gcoin address
-    CScript scriptPubKey = GetScriptForDestination(address);
+    CScript scriptPubKey = CScript() << ToByteVector(pubkey) << OP_CHECKSIG;;
 
     // Create and send the transaction
     CReserveKey reservekey(pwalletMain);
@@ -841,9 +841,11 @@ Value sendvotetoaddress(const Array& params, bool fHelp)
 
     LOCK2(cs_main, pwalletMain->cs_wallet);
 
-    CBitcoinAddress address(params[0].get_str());
-    if (!address.IsValid())
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Gcoin address");
+    std::string rawPubKey = params[0].get_str();
+    if (!IsHex(rawPubKey))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Public Key Hex");
+
+    CPubKey pubkey = ParseHex(rawPubKey);
 
     // Wallet comments
     CWalletTx wtx;
@@ -854,7 +856,7 @@ Value sendvotetoaddress(const Array& params, bool fHelp)
 
     EnsureWalletIsUnlocked();
 
-    if (!SendVote(address.Get(), wtx)) {
+    if (!SendVote(pubkey, wtx)) {
         // signature not complete
         Object result;
         result.push_back(Pair("hex", EncodeHexTx(wtx)));
@@ -892,9 +894,11 @@ Value sendbanvotetoaddress(const Array& params, bool fHelp)
 
     LOCK2(cs_main, pwalletMain->cs_wallet);
 
-    CBitcoinAddress address(params[0].get_str());
-    if (!address.IsValid())
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Gcoin address");
+    std::string rawPubKey = params[0].get_str();
+    if (!IsHex(rawPubKey))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Public Key Hex");
+
+    CPubKey pubkey = ParseHex(rawPubKey);
 
     // Wallet comments
     CWalletTx wtx;
@@ -905,7 +909,7 @@ Value sendbanvotetoaddress(const Array& params, bool fHelp)
 
     EnsureWalletIsUnlocked();
 
-    if (!SendBanVote(address.Get(), wtx)) {
+    if (!SendBanVote(pubkey, wtx)) {
         //signature not complete
         Object result;
         result.push_back(Pair("hex", EncodeHexTx(wtx)));

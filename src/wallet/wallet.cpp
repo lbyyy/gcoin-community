@@ -1238,7 +1238,8 @@ CAmount CWalletTx::GetAvailableColorCredit(type_Color color, bool fUseCache) con
             continue;
         if (!pwallet->IsSpent(hashTx, i)) {
             const CTxOut &txout = vout[i];
-            nCredit += pwallet->GetCredit(txout, ISMINE_SPENDABLE);
+            isminetype type = color == DEFAULT_ADMIN_COLOR? ISMINE_ALL: ISMINE_SPENDABLE;
+            nCredit += pwallet->GetCredit(txout, type);
             if (!MoneyRange(nCredit))
                 throw std::runtime_error("CWalletTx::GetAvailableCredit() : value out of range");
         }
@@ -1702,8 +1703,9 @@ void CWallet::AvailableCoinsForType(vector<COutput>& vCoins, const type_Color& s
                 if (pcoin->type == LICENSE && pcoin->vout[0].color == send_color)
                    fMintLicense = false;
                 // (2) AE mint new license
-                else if (pcoin->type == MINT && pcoin->vout[0].color == DEFAULT_ADMIN_COLOR && !plicense->HasColorOwner(send_color))
+                else if (pcoin->type == MINT && pcoin->vout[0].color == DEFAULT_ADMIN_COLOR && !plicense->HasColorOwner(send_color)) {
                    fMintLicense = true;
+                }
                 else
                    continue;
             } else if (!(pcoin->type == MINT && pcoin->vout[0].color == DEFAULT_ADMIN_COLOR))
