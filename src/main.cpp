@@ -2540,7 +2540,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                         return state.DoS(100,false, REJECT_INVALID, strprintf("mandatory-script-verify-flag-failed (%s)", ScriptErrorString(check.GetScriptError())));
                     }
                 }
-            } else {
+            } else if (tx.vout[0].color != 0) {
                 //similiar to above, but coinbase tx has no input so we should adjust it
 
                 // FIXME: what if tx.vin.size() and tx.vout.size() == 0?

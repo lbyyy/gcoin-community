@@ -3142,7 +3142,7 @@ string CWallet::MintMoney(const CAmount& nValue, const type_Color& color, CWalle
     wtxNew.BindWallet(this);
     txNew.type = MINT;
 
-    if (!SignSignature(*this, scriptPubKey, txNew, 0))
+    if (!(mint_purpose == LICENSE || mint_purpose == VOTE) && !SignSignature(*this, scriptPubKey, txNew, 0))
         return "Signing transaction failed";
 
     *static_cast<CTransaction*>(&wtxNew) = CTransaction(txNew);
